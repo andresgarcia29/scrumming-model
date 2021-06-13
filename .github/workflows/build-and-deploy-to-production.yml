@@ -1,0 +1,67 @@
+name: Build And Deploy To Production
+
+on:
+  push:
+    branches: [master]
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v2
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Check out code
+        uses: actions/checkout@v2
+
+      - name: Login to DockerHub
+        uses: docker/login-action@v1
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      - name: Build and push
+        id: docker_build
+        uses: docker/build-push-action@v2
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ secrets.DOCKER_USERNAME }}/scrumming-model:latest
+            ${{ secrets.DOCKER_USERNAME }}/scrumming-model:${{github.sha}}
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      - name: Check out code
+        uses: actions/checkout@v2
+        with:
+          repository: andresgarcia29/kubernetes-config
+          token: ${{ secrets.GIT_TOKEN }}
+          path: kubernetes-config
+          ref: master
+
+      - name: Setup Kustomize
+        uses: imranismail/setup-kustomize@v1
+        with:
+          kustomize-version: "3.6.1"
+
+      - name: Update Kubernetes resources
+        env:
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+        run: |
+          cd kubernetes-config
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          cd services/scrumming-model
+          kustomize edit set image scrumming-model=$DOCKER_USERNAME/scrumming-model:$GITHUB_SHA
+          cat kustomization.yml
+          git commit -am "Bump docker tag"
+          git push origin master
